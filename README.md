@@ -1,1 +1,0 @@
-# NXP-MCXA15x-One-Day-Workshop
