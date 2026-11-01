@@ -17,8 +17,8 @@
 
 - Sensor read returns success.
 - Room-temperature readings are plausible and stable.
-- CSV header appears once after reset.
-- CSV records contain seven fields.
+- CSV header (`timestamp_ms,temperature_c,temperature_f`) appears once after reset.
+- CSV records contain three fields (seven-field records are validated in Module 5).
 - Fahrenheit conversion equals Celsius times 9/5 plus 32 within rounding tolerance.
 
 ## Module 4
