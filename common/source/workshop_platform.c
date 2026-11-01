@@ -99,7 +99,7 @@ void platform_init(void) {
     /* Initialize button input and enable both-edge interrupt for Module 4 */
     gpio_pin_config_t sw_cfg = { kGPIO_DigitalInput, 0U };
     GPIO_PinInit(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, &sw_cfg);
-    GPIO_SetPinInterruptConfig(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, kGPIO_InterruptStatusFlagEitherEdge);
+    GPIO_SetPinInterruptConfig(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, kGPIO_InterruptEitherEdge);
     EnableIRQ(BOARD_SW_IRQ);
 
     /* Configure 1 ms SysTick timebase */
