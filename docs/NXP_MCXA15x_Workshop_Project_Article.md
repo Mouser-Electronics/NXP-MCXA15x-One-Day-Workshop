@@ -655,7 +655,7 @@ For example, if `rx_buf[0] = 0x17` and `rx_buf[1] = 0x80`:
      2000,23.56,74.41
      3000,23.62,74.52
      ```
-   * Gently place your fingertip on or near the onboard `P3T1755DP` sensor package (`U10`) and watch the Celsius and Fahrenheit values rise smoothly each second.
+   * Gently place your fingertip on or near the onboard `P3T1755DP` sensor package (`U5`) and watch the Celsius and Fahrenheit values rise smoothly each second.
 
 ### Optional Extension (FRDM-MCXA153 Only): Native $\text{I3C}$ Comparison
 *Participants using an **FRDM-MCXA153** board (which supports native $\text{I3C}$ without hardware modifications) who finish early may optionally import `driver_examples -> i3c -> master_read_sensor_p3t1755` into a separate project to compare $\text{I3C}$ dynamic address assignment (`RSTDAA` / `SETDASA`) against the static $7\text{-bit}$ `0x48` $\text{I}^2\text{C}$ transaction used in the required workshop path.*
