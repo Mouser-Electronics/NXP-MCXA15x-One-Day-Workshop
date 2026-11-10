@@ -336,7 +336,7 @@ void platform_init(void) {
     /* Initialize SW3 button input and enable dual-edge interrupt */
     gpio_pin_config_t sw_cfg = { kGPIO_DigitalInput, 0U };
     GPIO_PinInit(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, &sw_cfg);
-    GPIO_SetPinInterruptConfig(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, kGPIO_InterruptStatusFlagEitherEdge);
+    GPIO_SetPinInterruptConfig(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, kGPIO_InterruptEitherEdge);
     EnableIRQ(BOARD_SW_IRQ);
 
     /* Start 1 ms SysTick counter */
