@@ -151,8 +151,7 @@ So that your single project has all NXP SDK drivers needed across Modules 1 thro
    * `lpuart` *(Required for serial console output)*
    * `port` *(Required for pin multiplexing and pull-up configuration)*
    * `pwm` (eFlexPWM) and/or `ctimer` *(Required for Module 2 hardware PWM)*
-4. Expand **Utilities** and verify that **`debug_console`** and **`str`** (`fsl_str`) are **checked**.
-5. Click **OK** and then click **Yes** to update the project files.
+4. Click **OK** and then click **Yes** to update the project files.
 
 ### Step 5.5: Add the GitHub Workshop Files to Your Project
 1. First, test the unmodified SDK example: in the **Quickstart Panel**, click **Build** (hammer icon) and confirm `0 errors` in the **Console** tab.
