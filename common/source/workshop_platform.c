@@ -3,56 +3,45 @@
 #include "clock_config.h"
 #include "pin_mux.h"
 #include "fsl_common.h"
+#include "fsl_clock.h"
+#include "fsl_reset.h"
 #include "fsl_gpio.h"
 #include "fsl_port.h"
+#include "fsl_lpi2c.h"
 #include "fsl_debug_console.h"
+#include <string.h>
 
-/* Automatically enable floating-point printf/snprintf in MCUXpresso Newlib-nano */
+/* Force linker inclusion of floating-point printf/snprintf support (UG10055 Sec 19.5) */
 #if defined(__GNUC__)
 __asm(".global _printf_float");
 #endif
 
-/* Optional SDK peripheral drivers enabled per module */
-#if defined(FSL_FEATURE_SOC_PWM_COUNT) && (FSL_FEATURE_SOC_PWM_COUNT > 0) && defined(ENABLE_WORKSHOP_PWM)
-#include "fsl_pwm.h"
-#elif defined(FSL_FEATURE_SOC_CTIMER_COUNT) && (FSL_FEATURE_SOC_CTIMER_COUNT > 0) && defined(ENABLE_WORKSHOP_CTIMER_PWM)
-#include "fsl_ctimer.h"
+/* P3T1755DP Sensor Constants (Board Adapter Contract) */
+#define P3T1755_I2C_ADDR_7BIT       (0x48U)
+#define P3T1755_REG_TEMP            (0x00U)
+#define P3T1755_LSB_CELSIUS         (0.0625F)
+#define WORKSHOP_LPI2C_BAUDRATE_HZ  (100000U)
+
+#ifndef BOARD_SENSOR_LPI2C_BASEADDR
+#define BOARD_SENSOR_LPI2C_BASEADDR LPI2C0
 #endif
 
-#if defined(FSL_FEATURE_SOC_I3C_COUNT) && (FSL_FEATURE_SOC_I3C_COUNT > 0) && defined(BOARD_SENSOR_USE_I3C_I2C_MODE)
-#include "fsl_i3c.h"
-#elif defined(FSL_FEATURE_SOC_LPI2C_COUNT) && (FSL_FEATURE_SOC_LPI2C_COUNT > 0)
-#include "fsl_lpi2c.h"
-#endif
-
-/* P3T1755DP Constants (Board Adapter Contract) */
-#define P3T1755_I2C_ADDR_7BIT   (0x48U)
-#define P3T1755_REG_TEMP        (0x00U)
-#define P3T1755_LSB_CELSIUS     (0.0625F)
-
-/* Fallback board macro mappings for FRDM-MCXA156 / FRDM-MCXA153 */
+/* Default FRDM-MCXA156 SW3 (P0_6) and RGB LED (D12: Red=P3_12, Green=P3_13, Blue=P3_0) */
 #ifndef BOARD_SW_GPIO
   #if defined(BOARD_SW3_GPIO)
-    #define BOARD_SW_GPIO       BOARD_SW3_GPIO
-    #define BOARD_SW_GPIO_PIN   BOARD_SW3_GPIO_PIN
-    #define BOARD_SW_IRQ        BOARD_SW3_IRQ
+    #define BOARD_SW_GPIO        BOARD_SW3_GPIO
+    #define BOARD_SW_GPIO_PIN    BOARD_SW3_GPIO_PIN
+    #define BOARD_SW_IRQ         BOARD_SW3_IRQ
     #define BOARD_SW_IRQ_HANDLER BOARD_SW3_IRQ_HANDLER
-  #elif defined(BOARD_SW2_GPIO)
-    #define BOARD_SW_GPIO       BOARD_SW2_GPIO
-    #define BOARD_SW_GPIO_PIN   BOARD_SW2_GPIO_PIN
-    #define BOARD_SW_IRQ        BOARD_SW2_IRQ
-    #define BOARD_SW_IRQ_HANDLER BOARD_SW2_IRQ_HANDLER
   #else
-    /* Default FRDM-MCXA156 SW3 (P0_6) */
-    #define BOARD_SW_GPIO       GPIO0
-    #define BOARD_SW_GPIO_PIN   (6U)
-    #define BOARD_SW_IRQ        GPIO0_IRQn
+    #define BOARD_SW_GPIO        GPIO0
+    #define BOARD_SW_GPIO_PIN    (6U)
+    #define BOARD_SW_IRQ         GPIO0_IRQn
     #define BOARD_SW_IRQ_HANDLER GPIO0_IRQHandler
   #endif
 #endif
 
 #ifndef BOARD_LED_RED_GPIO
-  /* Default FRDM-MCXA156 RGB LED D12: Red=P3_12, Green=P3_13, Blue=P3_0 */
   #define BOARD_LED_RED_GPIO        GPIO3
   #define BOARD_LED_RED_GPIO_PIN    (12U)
   #define BOARD_LED_GREEN_GPIO      GPIO3
@@ -64,12 +53,10 @@ __asm(".global _printf_float");
 static volatile uint32_t g_systick_ms = 0U;
 static volatile bool g_button_edge_pending = false;
 
-/* 1 ms System Tick ISR */
 void SysTick_Handler(void) {
     g_systick_ms++;
 }
 
-/* Nonblocking GPIO Button Edge ISR (Module 4 Validation Requirement) */
 void BOARD_SW_IRQ_HANDLER(void) {
     uint32_t flags = GPIO_GpioGetInterruptFlags(BOARD_SW_GPIO);
     GPIO_GpioClearInterruptFlags(BOARD_SW_GPIO, flags);
@@ -78,10 +65,55 @@ void BOARD_SW_IRQ_HANDLER(void) {
 }
 
 static void write_led_pins(bool red_on, bool green_on, bool blue_on) {
-    /* Onboard RGB LED is active-low: 0U turns channel ON, 1U turns channel OFF */
+    /* Active-low RGB LED: 0U = ON, 1U = OFF */
     GPIO_PinWrite(BOARD_LED_RED_GPIO, BOARD_LED_RED_GPIO_PIN, red_on ? 0U : 1U);
     GPIO_PinWrite(BOARD_LED_GREEN_GPIO, BOARD_LED_GREEN_GPIO_PIN, green_on ? 0U : 1U);
     GPIO_PinWrite(BOARD_LED_BLUE_GPIO, BOARD_LED_BLUE_GPIO_PIN, blue_on ? 0U : 1U);
+}
+
+static void init_sensor_lpi2c0_pins_and_bus(void) {
+    /* Enable clocks and release resets for PORT0, PORT3, GPIO0, GPIO3, and LPI2C0 */
+    CLOCK_EnableClock(kCLOCK_GatePORT0);
+    CLOCK_EnableClock(kCLOCK_GatePORT3);
+    CLOCK_EnableClock(kCLOCK_GateGPIO0);
+    CLOCK_EnableClock(kCLOCK_GateGPIO3);
+    RESET_ReleasePeripheralReset(kPORT0_RST_SHIFT_RSTn);
+    RESET_ReleasePeripheralReset(kPORT3_RST_SHIFT_RSTn);
+    RESET_ReleasePeripheralReset(kGPIO0_RST_SHIFT_RSTn);
+    RESET_ReleasePeripheralReset(kGPIO3_RST_SHIFT_RSTn);
+
+    /* Ensure RGB LED pins (P3_12, P3_13, P3_0) and SW3 (P0_6) are muxed to GPIO (Alt 0) */
+    PORT_SetPinMux(PORT3, 12U, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT3, 13U, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT3, 0U,  kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, 6U,  kPORT_MuxAlt0);
+
+    /* Route P0_16 (LPI2C0_SDA) and P0_17 (LPI2C0_SCL) to Alt 2 with input buffer & pull-up enabled */
+    const port_pin_config_t lpi2c_pin_cfg = {
+        .pullSelect          = kPORT_PullUp,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainEnable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .driveStrength1      = kPORT_NormalDriveStrength,
+        .mux                 = kPORT_MuxAlt2,
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister
+    };
+    PORT_SetPinConfig(PORT0, 16U, &lpi2c_pin_cfg);
+    PORT_SetPinConfig(PORT0, 17U, &lpi2c_pin_cfg);
+
+    /* Attach FRO_HF_DIV clock to LPI2C0 and initialize master at 100 kHz */
+    CLOCK_SetClockDiv(kCLOCK_DivLPI2C0, 1U);
+    CLOCK_AttachClk(kFRO_HF_DIV_to_LPI2C0);
+    RESET_ReleasePeripheralReset(kLPI2C0_RST_SHIFT_RSTn);
+
+    lpi2c_master_config_t masterCfg;
+    LPI2C_MasterGetDefaultConfig(&masterCfg);
+    masterCfg.baudRate_Hz = WORKSHOP_LPI2C_BAUDRATE_HZ;
+    LPI2C_MasterInit(BOARD_SENSOR_LPI2C_BASEADDR, &masterCfg, CLOCK_GetLpi2cClkFreq(0U));
 }
 
 void platform_init(void) {
@@ -89,20 +121,22 @@ void platform_init(void) {
     BOARD_InitBootClocks();
     BOARD_InitDebugConsole();
 
-    /* Initialize active-low RGB LED outputs to OFF (logical high = 1U) */
+    init_sensor_lpi2c0_pins_and_bus();
+
+    /* Initialize active-low RGB LED outputs to OFF (1U) */
     gpio_pin_config_t led_cfg = { kGPIO_DigitalOutput, 1U };
     GPIO_PinInit(BOARD_LED_RED_GPIO, BOARD_LED_RED_GPIO_PIN, &led_cfg);
     GPIO_PinInit(BOARD_LED_GREEN_GPIO, BOARD_LED_GREEN_GPIO_PIN, &led_cfg);
     GPIO_PinInit(BOARD_LED_BLUE_GPIO, BOARD_LED_BLUE_GPIO_PIN, &led_cfg);
     platform_led_set(LED_OFF);
 
-    /* Initialize button input and enable both-edge interrupt for Module 4 */
+    /* Initialize SW3 button input and enable dual-edge interrupt */
     gpio_pin_config_t sw_cfg = { kGPIO_DigitalInput, 0U };
     GPIO_PinInit(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, &sw_cfg);
     GPIO_SetPinInterruptConfig(BOARD_SW_GPIO, BOARD_SW_GPIO_PIN, kGPIO_InterruptEitherEdge);
     EnableIRQ(BOARD_SW_IRQ);
 
-    /* Configure 1 ms SysTick timebase */
+    /* Start 1 ms SysTick counter */
     (void)SysTick_Config(SystemCoreClock / 1000U);
 }
 
@@ -138,22 +172,17 @@ void platform_led_set(led_color_t color) {
 }
 
 void platform_led_set_rgb_percent(uint8_t red, uint8_t green, uint8_t blue) {
-    /* Clamp duty cycle percentages to [0, 100] per Validation Checklist */
+    /* Clamp duty cycle percentages to [0, 100] */
     uint8_t r = (red > 100U)   ? 100U : red;
     uint8_t g = (green > 100U) ? 100U : green;
     uint8_t b = (blue > 100U)  ? 100U : blue;
 
 #if defined(ENABLE_WORKSHOP_PWM) && defined(BOARD_PWM_BASEADDR)
-    /* Active-low polarity inversion: 0% brightness = 100% high level, 100% brightness = 0% high level */
     PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_0, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - r));
     PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_1, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - g));
     PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_2, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - b));
     PWM_SetPwmLdok(BOARD_PWM_BASEADDR, kPWM_Control_Module_0 | kPWM_Control_Module_1 | kPWM_Control_Module_2, true);
-#elif defined(ENABLE_WORKSHOP_CTIMER_PWM) && defined(CTIMER0)
-    CTIMER_UpdatePwmDutycycle(CTIMER0, kCTIMER_Match_0, kCTIMER_Match_1, (uint8_t)(100U - g));
-    CTIMER_UpdatePwmDutycycle(CTIMER0, kCTIMER_Match_0, kCTIMER_Match_2, (uint8_t)(100U - b));
 #else
-    /* Fallback threshold behaviour if hardware PWM peripheral is not yet routed in Pins tool */
     write_led_pins(r >= 50U, g >= 50U, b >= 50U);
 #endif
 }
@@ -164,24 +193,9 @@ bool platform_temperature_read_c(float *temperature_c) {
     }
 
     uint8_t rx_buf[2] = {0U, 0U};
-    status_t status = kStatus_Fail;
-
-#if defined(FSL_FEATURE_SOC_I3C_COUNT) && (FSL_FEATURE_SOC_I3C_COUNT > 0) && defined(BOARD_SENSOR_USE_I3C_I2C_MODE)
-    /* Unmodified FRDM-MCXA156 routes P3T1755DP to I3C0; use legacy I2C-compatible transfer at 0x48 */
-    i3c_master_transfer_t xfer;
-    memset(&xfer, 0, sizeof(xfer));
-    xfer.flags          = kI3C_TransferDefaultFlag;
-    xfer.slaveAddress   = P3T1755_I2C_ADDR_7BIT;
-    xfer.direction      = kI3C_Read;
-    xfer.subaddress     = P3T1755_REG_TEMP;
-    xfer.subaddressSize = 1U;
-    xfer.data           = rx_buf;
-    xfer.dataSize       = sizeof(rx_buf);
-    xfer.busType        = kI3C_TypeI2C;
-    status = I3C_MasterTransferBlocking(I3C0, &xfer);
-#elif defined(FSL_FEATURE_SOC_LPI2C_COUNT) && (FSL_FEATURE_SOC_LPI2C_COUNT > 0) && defined(BOARD_SENSOR_LPI2C_BASEADDR)
     lpi2c_master_transfer_t xfer;
     memset(&xfer, 0, sizeof(xfer));
+
     xfer.flags          = kLPI2C_TransferDefaultFlag;
     xfer.slaveAddress   = P3T1755_I2C_ADDR_7BIT;
     xfer.direction      = kLPI2C_Read;
@@ -189,9 +203,8 @@ bool platform_temperature_read_c(float *temperature_c) {
     xfer.subaddressSize = 1U;
     xfer.data           = rx_buf;
     xfer.dataSize       = sizeof(rx_buf);
-    status = LPI2C_MasterTransferBlocking(BOARD_SENSOR_LPI2C_BASEADDR, &xfer);
-#endif
 
+    status_t status = LPI2C_MasterTransferBlocking(BOARD_SENSOR_LPI2C_BASEADDR, &xfer);
     if (status != kStatus_Success) {
         return false;
     }
