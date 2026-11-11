@@ -1,6 +1,9 @@
 #ifndef WORKSHOP_PLATFORM_H
 #define WORKSHOP_PLATFORM_H
 
+#define ENABLE_WORKSHOP_PWM 1
+#define BOARD_PWM_BASEADDR PWM0 /* Swap PWM0 for your exact eFlexPWM timer base if different! */
+
 #include <stdbool.h>
 #include <stdint.h>
 
