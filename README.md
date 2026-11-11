@@ -48,10 +48,10 @@ NXP-MCXA15x-One-Day-Workshop/
 │   │   └── workshop_temperature.h                     # Temperature unit conversion interface
 │   └── source/
 │       ├── workshop_events.c                          # 30 ms debounce filter & hold-duration classifier
+│       ├── workshop_platform.c                        # FRDM-MCXA156 / FRDM-MCXA153 LPI2C & GPIO adapter
 │       └── workshop_temperature.c                     # Celsius to Fahrenheit conversion
 ├── board-support/
-│   ├── README.md                                      # Board Adapter Contract specification
-│   └── workshop_platform.c                            # FRDM-MCXA156 / FRDM-MCXA153 LPI2C & GPIO adapter
+│   └── README.md                                      # Board adapter contract specification
 ├── module-01-gpio/
 │   ├── starter/main.c                                 # Module 1 student starter template
 │   └── solution/main.c                                # Module 1 reference solution
@@ -115,7 +115,7 @@ git clone https://github.com/Mouser-Electronics/NXP-MCXA15x-One-Day-Workshop.git
    * Go to **Tool Settings -> MCU C Compiler -> Includes**.
    * Next to **Include paths (-I)**, click the **Add...** (`+`) icon, click **Workspace...**, select your project's **`common/include`** folder, and click **OK**.
 4. **Enable Floating-Point `printf` / `snprintf` (`%.2f`):**
-   * In the **Quickstart Panel**, click **Quick Settings >> -> Set library/header type** and ensure floating-point `printf` is enabled, or go to **C/C++ Build -> Settings -> MCU Linker -> Managed Linker Script** (or **Miscellaneous**) and enable **`-u _printf_float`** (also enforced automatically in `board-support/workshop_platform.c`).
+   * In the **Quickstart Panel**, click **Quick Settings >> -> Set library/header type** and ensure floating-point `printf` is enabled, or go to **C/C++ Build -> Settings -> MCU Linker -> Managed Linker Script** (or **Miscellaneous**) and enable **`-u _printf_float`** (also enforced automatically in `common/source/workshop_platform.c`).
 5. Click **Apply and Close**.
 
 ### Step 6: Build, Flash, and Debug
