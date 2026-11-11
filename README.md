@@ -51,7 +51,10 @@ NXP-MCXA15x-One-Day-Workshop/
 │       ├── workshop_platform.c                        # FRDM-MCXA156 / FRDM-MCXA153 LPI2C & GPIO adapter
 │       └── workshop_temperature.c                     # Celsius to Fahrenheit conversion
 ├── board-support/
-│   └── README.md                                      # Board adapter contract specification
+│   ├── frdm_mcxa153/
+│   │   └── README.md                                  # FRDM-MCXA153 board adapter contract
+│   └── frdm_mcxa156/
+│       └── README.md                                  # FRDM-MCXA156 board adapter contract
 ├── module-01-gpio/
 │   ├── starter/main.c                                 # Module 1 student starter template
 │   └── solution/main.c                                # Module 1 reference solution
