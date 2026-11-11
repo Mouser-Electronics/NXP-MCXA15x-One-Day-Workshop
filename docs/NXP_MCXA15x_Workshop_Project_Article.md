@@ -85,7 +85,7 @@ To keep the student exercises focused on embedded software architecture rather t
    * `common/include/workshop_config.h`: Defines timing constants (`TEMP_SAMPLE_INTERVAL_MS = 1000U`, `BUTTON_DEBOUNCE_MS = 30U`, `LONG_PRESS_TIME_MS = 1500U`, `LED_FLASH_INTERVAL_MS = 250U`) and temperature thresholds (`COLD_THRESHOLD_C = 18.0F`, `WARNING_THRESHOLD_C = 27.0F`, `ALARM_THRESHOLD_C = 30.0F`).
    * `common/include/workshop_events.h` & `common/source/workshop_events.c`: Implements the nonblocking $30\text{ ms}$ debounce state machine (`button_filter_t`) and hold-duration classifier.
    * `common/include/workshop_temperature.h` & `common/source/workshop_temperature.c`: Implements `celsius_to_fahrenheit()`.
-2. **Board Support Layer (`board-support/workshop_platform.c`):**
+2. **Board Support Layer (`common/source/workshop_platform.c`):**
    * Maps the `workshop_platform.h` functions to the NXP MCUXpresso SDK 26.09.00 drivers (`fsl_gpio.h`, `fsl_port.h`, `fsl_clock.h`, `fsl_lpi2c.h`, `fsl_pwm.h`/`fsl_ctimer.h`, and `fsl_debug_console.h`) generated for the FRDM-MCXA156 or FRDM-MCXA153.
 
 ### Why the Cooperative Scheduler Does Not Block
@@ -160,7 +160,7 @@ So that your single project has all NXP SDK drivers needed across Modules 1 thro
 4. Return to MCUXpresso IDE, right-click the top-level project name in **Project Explorer**, and click **Paste**.
    *(If you drag and drop the folders instead, select **Copy files and folders** in the File Operation dialog and click **OK**.)*
 5. Confirm that your **Project Explorer** tree now shows:
-   * `board-support/workshop_platform.c`
+   * `common/source/workshop_platform.c`
    * `common/include/workshop_config.h`
    * `common/include/workshop_events.h`
    * `common/include/workshop_platform.h`
@@ -185,16 +185,16 @@ As described in *MCUXpresso IDE User Guide (UG10055, Section 5.2.1)*, MCUXpresso
    * Under **MCU C Compiler -> Debugging**, verify **Debug Level** is **`Default (-g)`** or **`Maximum (-g3)`**.
 6. **Verify Floating-Point `printf` / `snprintf` Support (`%.2f`):**
    * By default, embedded C libraries (`Redlib` and `Newlib-nano`) omit floating-point formatters to save Flash memory, which causes `snprintf(line, sizeof(line), "%.2f", c)` in Modules 3 and 5 to print blank fields unless floating-point `printf` is enabled.
-   * `board-support/workshop_platform.c` automatically includes `__asm(".global _printf_float");` (per *UG10055 Section 19.5*) to enable float formatting in `Newlib-nano`.
+   * `common/source/workshop_platform.c` automatically includes `__asm(".global _printf_float");` (per *UG10055 Section 19.5*) to enable float formatting in `Newlib-nano`.
    * If your project uses **Redlib**, ensure `CR_INTEGER_PRINTF` is **not** defined under **MCU C Compiler -> Preprocessor -> Defined symbols (-D)**; if it is present, select `CR_INTEGER_PRINTF` and click the **Delete** (`X`) icon.
 7. Click **Apply and Close**.
 8. **Verify Source Exclusion Flag:** Look at the `common` and `board-support` folders in **Project Explorer**. If either folder icon has a grey slash through it (indicating Eclipse marked a newly pasted folder as *Excluded from build*), right-click that folder, select **Resource Configurations -> Exclude from build...**, uncheck **Debug** and **Release**, and click **OK**.
 
 ---
 
-## 6. Reference Implementation: `board-support/workshop_platform.c`
+## 6. Reference Implementation: `common/source/workshop_platform.c`
 
-Confirm that `board-support/workshop_platform.c` in your project matches the complete **FRDM-MCXA156 SDK 26.09.00** implementation below. Notice how it:
+Confirm that `common/source/workshop_platform.c` in your project matches the complete **FRDM-MCXA156 SDK 26.09.00** implementation below. Notice how it:
 * Configures **SysTick** for a $1\text{ ms}$ interrupt timebase (`platform_millis()`).
 * Initializes the active-low RGB LED pins (`P3_12` Red, `P3_13` Green, `P3_0` Blue) to **OFF** (`1U`) at startup and hides the active-low polarity inside `platform_led_set()`.
 * Configures user push button **SW3** (`P0_6`) with a both-edge GPIO interrupt (`GPIO0_IRQHandler`) that sets `g_button_edge_pending = true` and exits immediately.
@@ -693,7 +693,7 @@ For example, if `rx_buf[0] = 0x17` and `rx_buf[1] = 0x80`:
 ### Step-by-Step Procedure
 
 1. **Inspect the $\text{I}^2\text{C}$ Transfer & Conversion in `workshop_platform.c`:**
-   * Open `board-support/workshop_platform.c` and review `platform_temperature_read_c()`.
+   * Open `common/source/workshop_platform.c` and review `platform_temperature_read_c()`.
    * Notice how `LPI2C_MasterTransferBlocking(LPI2C0, &xfer)` transmits the $1\text{-byte}$ register subaddress `0x00` to $7\text{-bit}$ address `0x48` and reads `2` bytes into `rx_buf`. If the bus transfer fails (`status != kStatus_Success`), it immediately returns `false`.
 2. **Replace `source/main.c` with Module 3 Starter:**
    * Copy `module-03-temperature/starter/main.c` from your GitHub repository folder and paste it over `source/main.c` in your project:
