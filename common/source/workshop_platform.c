@@ -2,6 +2,7 @@
 #include "board.h"
 #include "clock_config.h"
 #include "pin_mux.h"
+#include "fsl_pwm.h"
 #include "fsl_common.h"
 #include "fsl_clock.h"
 #include "fsl_reset.h"
@@ -77,16 +78,26 @@ static void init_sensor_lpi2c0_pins_and_bus(void) {
     CLOCK_EnableClock(kCLOCK_GatePORT3);
     CLOCK_EnableClock(kCLOCK_GateGPIO0);
     CLOCK_EnableClock(kCLOCK_GateGPIO3);
+
     RESET_ReleasePeripheralReset(kPORT0_RST_SHIFT_RSTn);
     RESET_ReleasePeripheralReset(kPORT3_RST_SHIFT_RSTn);
     RESET_ReleasePeripheralReset(kGPIO0_RST_SHIFT_RSTn);
     RESET_ReleasePeripheralReset(kGPIO3_RST_SHIFT_RSTn);
 
     /* Ensure RGB LED pins (P3_12, P3_13, P3_0) and SW3 (P0_6) are muxed to GPIO (Alt 0) */
+#if defined(ENABLE_WORKSHOP_PWM)
+    /* Route to physical hardware PWM across FlexPWM0 and FlexPWM1 */
+    PORT_SetPinMux(PORT3, 12U, kPORT_MuxAlt7); /* Red:   PWM1_SM2_PWMA */
+    PORT_SetPinMux(PORT3, 13U, kPORT_MuxAlt7); /* Green: PWM1_SM2_PWMB */
+    PORT_SetPinMux(PORT3, 0U,  kPORT_MuxAlt5); /* Blue:  PWM0_SM0_PWMA */
+#else
+    /* Standard GPIO fallback */
     PORT_SetPinMux(PORT3, 12U, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT3, 13U, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT3, 0U,  kPORT_MuxAlt0);
-    PORT_SetPinMux(PORT0, 6U,  kPORT_MuxAlt0);
+#endif
+
+    PORT_SetPinMux(PORT0, 6U,  kPORT_MuxAlt0); // Keep SW3 button as GPIO
 
     /* Route P0_16 (LPI2C0_SDA) and P0_17 (LPI2C0_SCL) to Alt 2 with input buffer & pull-up enabled */
     const port_pin_config_t lpi2c_pin_cfg = {
@@ -116,6 +127,87 @@ static void init_sensor_lpi2c0_pins_and_bus(void) {
     LPI2C_MasterInit(BOARD_SENSOR_LPI2C_BASEADDR, &masterCfg, CLOCK_GetLpi2cClkFreq(0U));
 }
 
+#if defined(ENABLE_WORKSHOP_PWM)
+static void init_rgb_pwm(void) {
+    pwm_config_t pwmConfig;
+    pwm_signal_param_t pwmSignal_Blue[1];
+    pwm_signal_param_t pwmSignal_RedGreen[2];
+
+    uint32_t pwmSourceClockInHz = SystemCoreClock;
+
+    /* 1. Wake up BOTH FlexPWM hardware blocks! */
+    CLOCK_EnableClock(kCLOCK_GateFLEXPWM0);
+    CLOCK_EnableClock(kCLOCK_GateFLEXPWM1);
+
+    /* 2. Power up Submodule 0 (Blue) and Submodule 2 (Red/Green) */
+    CLOCK_EnableClock(kCLOCK_GatePWM0SM0);
+    CLOCK_EnableClock(kCLOCK_GatePWM1SM2);
+
+    /* 3. Unclamp the hardware resets */
+    RESET_ReleasePeripheralReset(kFLEXPWM0_RST_SHIFT_RSTn);
+    RESET_ReleasePeripheralReset(kFLEXPWM1_RST_SHIFT_RSTn);
+
+    /* 4. Get the default config and apply the prescaler/debug overrides */
+    PWM_GetDefaultConfig(&pwmConfig);
+    pwmConfig.reloadLogic = kPWM_ReloadPwmFullCycle;
+    pwmConfig.prescale = kPWM_Prescale_Divide_8;
+    pwmConfig.enableDebugMode = true;
+
+    /* Decouple Channel A and B so Red and Green don't fight! */
+    pwmConfig.pairOperation = kPWM_Independent;
+
+    /* Initialize SM0 on FLEXPWM0 and SM2 on FLEXPWM1 */
+    PWM_Init(FLEXPWM0, kPWM_Module_0, &pwmConfig);
+    PWM_Init(FLEXPWM1, kPWM_Module_2, &pwmConfig);
+
+    /* ---------------------------------------------------------------------- */
+    /* THE VIBE CHECK (Hardware Overrides)                                    */
+    /* ---------------------------------------------------------------------- */
+
+    /* Clear the Disable Mapping registers for BOTH controllers */
+    FLEXPWM0->SM[0].DISMAP[0] = 0x0000;
+    FLEXPWM0->SM[0].DISMAP[1] = 0x0000;
+
+    FLEXPWM1->SM[2].DISMAP[0] = 0x0000;
+    FLEXPWM1->SM[2].DISMAP[1] = 0x0000;
+
+    /* Manually force the Master Output Enable switches ON */
+    FLEXPWM0->OUTEN |= PWM_OUTEN_PWMA_EN(1U << 0);   /* SM0 PWMA (Blue)  */
+
+    FLEXPWM1->OUTEN |= PWM_OUTEN_PWMA_EN(1U << 2) |  /* SM2 PWMA (Red)   */
+                       PWM_OUTEN_PWMB_EN(1U << 2);   /* SM2 PWMB (Green) */
+
+    /* ---------------------------------------------------------------------- */
+
+    /* 5. Configure the Channels (Default 100% duty cycle = OFF for active-low LEDs) */
+
+    /* Setup Blue (FLEXPWM0, SM0, Channel A) */
+    memset(pwmSignal_Blue, 0, sizeof(pwmSignal_Blue));
+    pwmSignal_Blue[0].pwmChannel = kPWM_PwmA;
+    pwmSignal_Blue[0].level = kPWM_HighTrue;
+    pwmSignal_Blue[0].dutyCyclePercent = 100U;
+    PWM_SetupPwm(FLEXPWM0, kPWM_Module_0, pwmSignal_Blue, 1, kPWM_SignedCenterAligned, 1000U, pwmSourceClockInHz);
+
+    /* Setup Red and Green (FLEXPWM1, SM2, Channels A and B) */
+    memset(pwmSignal_RedGreen, 0, sizeof(pwmSignal_RedGreen));
+    pwmSignal_RedGreen[0].pwmChannel = kPWM_PwmA;
+    pwmSignal_RedGreen[0].level = kPWM_HighTrue;
+    pwmSignal_RedGreen[0].dutyCyclePercent = 100U;
+
+    pwmSignal_RedGreen[1].pwmChannel = kPWM_PwmB;
+    pwmSignal_RedGreen[1].level = kPWM_HighTrue;
+    pwmSignal_RedGreen[1].dutyCyclePercent = 100U;
+    PWM_SetupPwm(FLEXPWM1, kPWM_Module_2, pwmSignal_RedGreen, 2, kPWM_SignedCenterAligned, 1000U, pwmSourceClockInHz);
+
+    /* 6. Load the config and hit play! */
+    PWM_SetPwmLdok(FLEXPWM0, kPWM_Control_Module_0, true);
+    PWM_SetPwmLdok(FLEXPWM1, kPWM_Control_Module_2, true);
+
+    PWM_StartTimer(FLEXPWM0, kPWM_Control_Module_0);
+    PWM_StartTimer(FLEXPWM1, kPWM_Control_Module_2);
+}
+#endif
+
 void platform_init(void) {
     BOARD_InitBootPins();
     BOARD_InitBootClocks();
@@ -123,12 +215,17 @@ void platform_init(void) {
 
     init_sensor_lpi2c0_pins_and_bus();
 
-    /* Initialize active-low RGB LED outputs to OFF (1U) */
+#if defined(ENABLE_WORKSHOP_PWM)
+    /* Start the hardware timers so the APB bus is ready for duty cycle updates */
+    init_rgb_pwm();
+#else
+    /* Fallback: Initialize active-low RGB LED outputs to OFF (1U) */
     gpio_pin_config_t led_cfg = { kGPIO_DigitalOutput, 1U };
     GPIO_PinInit(BOARD_LED_RED_GPIO, BOARD_LED_RED_GPIO_PIN, &led_cfg);
     GPIO_PinInit(BOARD_LED_GREEN_GPIO, BOARD_LED_GREEN_GPIO_PIN, &led_cfg);
     GPIO_PinInit(BOARD_LED_BLUE_GPIO, BOARD_LED_BLUE_GPIO_PIN, &led_cfg);
     platform_led_set(LED_OFF);
+#endif
 
     /* Initialize SW3 button input and enable dual-edge interrupt */
     gpio_pin_config_t sw_cfg = { kGPIO_DigitalInput, 0U };
@@ -158,16 +255,17 @@ void platform_button_clear_edge(void) {
 }
 
 void platform_led_set(led_color_t color) {
+    /* Route all legacy solid color calls through the unified PWM/GPIO percent function! */
     switch (color) {
-        case LED_RED:     write_led_pins(true,  false, false); break;
-        case LED_GREEN:   write_led_pins(false, true,  false); break;
-        case LED_BLUE:    write_led_pins(false, false, true);  break;
-        case LED_YELLOW:  write_led_pins(true,  true,  false); break;
-        case LED_CYAN:    write_led_pins(false, true,  true);  break;
-        case LED_MAGENTA: write_led_pins(true,  false, true);  break;
-        case LED_WHITE:   write_led_pins(true,  true,  true);  break;
+        case LED_RED:     platform_led_set_rgb_percent(100U, 0U,   0U);   break;
+        case LED_GREEN:   platform_led_set_rgb_percent(0U,   100U, 0U);   break;
+        case LED_BLUE:    platform_led_set_rgb_percent(0U,   0U,   100U); break;
+        case LED_YELLOW:  platform_led_set_rgb_percent(100U, 100U, 0U);   break;
+        case LED_CYAN:    platform_led_set_rgb_percent(0U,   100U, 100U); break;
+        case LED_MAGENTA: platform_led_set_rgb_percent(100U, 0U,   100U); break;
+        case LED_WHITE:   platform_led_set_rgb_percent(100U, 100U, 100U); break;
         case LED_OFF:
-        default:          write_led_pins(false, false, false); break;
+        default:          platform_led_set_rgb_percent(0U,   0U,   0U);   break;
     }
 }
 
@@ -177,11 +275,15 @@ void platform_led_set_rgb_percent(uint8_t red, uint8_t green, uint8_t blue) {
     uint8_t g = (green > 100U) ? 100U : green;
     uint8_t b = (blue > 100U)  ? 100U : blue;
 
-#if defined(ENABLE_WORKSHOP_PWM) && defined(BOARD_PWM_BASEADDR)
-    PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_0, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - r));
-    PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_1, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - g));
-    PWM_UpdatePwmDutycycle(BOARD_PWM_BASEADDR, kPWM_Module_2, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - b));
-    PWM_SetPwmLdok(BOARD_PWM_BASEADDR, kPWM_Control_Module_0 | kPWM_Control_Module_1 | kPWM_Control_Module_2, true);
+#if defined(ENABLE_WORKSHOP_PWM)
+    /* Route ALL duty cycle updates to their physical controllers! */
+    PWM_UpdatePwmDutycycle(FLEXPWM1, kPWM_Module_2, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - r)); /* Red */
+    PWM_UpdatePwmDutycycle(FLEXPWM1, kPWM_Module_2, kPWM_PwmB, kPWM_SignedCenterAligned, (uint8_t)(100U - g)); /* Green */
+    PWM_UpdatePwmDutycycle(FLEXPWM0, kPWM_Module_0, kPWM_PwmA, kPWM_SignedCenterAligned, (uint8_t)(100U - b)); /* Blue */
+
+    /* Tell the hardware to load the updated values! */
+    PWM_SetPwmLdok(FLEXPWM1, kPWM_Control_Module_2, true);
+    PWM_SetPwmLdok(FLEXPWM0, kPWM_Control_Module_0, true);
 #else
     write_led_pins(r >= 50U, g >= 50U, b >= 50U);
 #endif
